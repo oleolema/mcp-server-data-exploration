@@ -134,11 +134,11 @@ def main():
     check_uv()
     setup_venv()
     sync_dependencies()
-    check_claude_desktop()
-    config_path, config = setup_claude_config()
+    # check_claude_desktop()
+    # config_path, config = setup_claude_config()
     wheel_path = build_package()
-    update_config(config_path, config, wheel_path)
-    restart_claude()
+    # update_config(config_path, config, wheel_path)
+    # restart_claude()
     print("Setup completed successfully!")
 
 if __name__ == "__main__":

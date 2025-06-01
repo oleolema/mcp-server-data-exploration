@@ -13,7 +13,7 @@ from mcp.types import (
     PromptArgument,
     EmbeddedResource,
     GetPromptResult,
-    PromptMessage,
+    PromptMessage, ErrorData,
 )
 from mcp.server import NotificationOptions, Server
 from mcp.shared.exceptions import McpError
@@ -30,85 +30,84 @@ import statsmodels.api as sm
 from io import StringIO
 import sys
 
-
 logger = logging.getLogger(__name__)
 logger.info("Starting mini data science exploration server")
+
 
 ### Prompt templates
 class DataExplorationPrompts(str, Enum):
     EXPLORE_DATA = "explore-data"
+
 
 class PromptArgs(str, Enum):
     CSV_PATH = "csv_path"
     TOPIC = "topic"
 
 PROMPT_TEMPLATE = """
-You are a professional Data Scientist tasked with performing exploratory data analysis on a dataset. Your goal is to provide insightful analysis while ensuring stability and manageable result sizes.
+你是一名专业的数据科学家，负责对一个数据集进行探索性数据分析。你的目标是提供有见地的分析，提出问题，并按步骤解决问题，同时确保稳定性和结果大小的可管理性。
 
-First, load the CSV file from the following path:
+首先，从以下路径加载CSV文件：
 
 <csv_path>
 {csv_path}
 </csv_path>
 
-Your analysis should focus on the following topic:
+你的分析应集中在以下主题：
 
 <analysis_topic>
 {topic}
 </analysis_topic>
 
-You have access to the following tools for your analysis:
-1. load_csv: Use this to load the CSV file.
-2. run-script: Use this to execute Python scripts on the MCP server.
+你可以使用以下工具进行分析：
+1. load_csv：用于加载CSV文件。
+2. run_script：用于在MCP服务器上执行Python脚本。
 
-Please follow these steps carefully:
+请仔细按照以下步骤进行：
 
-1. Load the CSV file using the load_csv tool.
+1. 使用load_csv工具加载CSV文件。
 
-2. Explore the dataset. Provide a brief summary of its structure, including the number of rows, columns, and data types. Wrap your exploration process in <dataset_exploration> tags, including:
-   - List of key statistics about the dataset
-   - Potential challenges you foresee in analyzing this data
+2. 探索数据集。提供其结构的简要总结，包括行数、列数和数据类型。包括：
+   - 数据集的关键统计信息列表
+   - 你在分析该数据时预见的潜在挑战
 
-3. Wrap your thought process in <analysis_planning> tags:
-   Analyze the dataset size and complexity:
-   - How many rows and columns does it have?
-   - Are there any potential computational challenges based on the data types or volume?
-   - What kind of questions would be appropriate given the dataset's characteristics and the analysis topic?
-   - How can we ensure that our questions won't result in excessively large outputs?
+3. 你需要有一个思考过程：
+   分析数据集的大小和复杂性：
+   - 它有多少行和列？
+   - 基于数据类型或数据量是否存在潜在的计算挑战？
+   - 鉴于数据集的特点和分析主题，哪些问题是合适的？
+   - 我们如何确保我们的问题不会导致过大的输出？
 
-   Based on this analysis:
-   - List 10 potential questions related to the analysis topic
-   - Evaluate each question against the following criteria:
-     * Directly related to the analysis topic
-     * Can be answered with reasonable computational effort
-     * Will produce manageable result sizes
-     * Provides meaningful insights into the data
-   - Select the top 5 questions that best meet all criteria
+   基于此分析：
+   - 列出与分析主题相关的10个潜在问题
+   - 根据以下标准评估每个问题：
+     * 直接与分析主题相关
+     * 可以以合理的计算努力回答
+     * 将产生可管理的结果大小
+     * 提供对数据的有意义的见解
+   - 选择最符合所有标准的前5个问题
 
-4. List the 5 questions you've selected, ensuring they meet the criteria outlined above.
+4. 列出你选择的5个问题，确保它们符合上述标准。
 
-5. For each question, follow these steps:
-   a. Wrap your thought process in <analysis_planning> tags:
-      - How can I structure the Python script to efficiently answer this question?
-      - What data preprocessing steps are necessary?
-      - How can I limit the output size to ensure stability?
-      - What type of visualization would best represent the results?
-      - Outline the main steps the script will follow
-   
-   b. Write a Python script to answer the question. Include comments explaining your approach and any measures taken to limit output size.
-   
-   c. Use the run_script tool to execute your Python script on the MCP server.
-   
-   d. Render the results returned by the run-script tool as a chart using plotly.js (prefer loading from cdnjs.cloudflare.com). Do not use react or recharts, and do not read the original CSV file directly. Provide the plotly.js code to generate the chart.
+5. 对每个问题，按照以下步骤进行：
+   a. 你需要有一个思考过程：
+      - 如何结构化Python脚本以有效回答这个问题？
+      - 需要进行哪些数据预处理步骤？
+      - 如何限制输出大小以确保稳定性？
+      - 如何结合数据来说明结果？
+      - 概述脚本将遵循的主要步骤
 
-6. After completing the analysis for all 5 questions, provide a brief summary of your findings and any overarching insights gained from the data.
+   b. 编写Python脚本回答问题。包括解释你的方法和任何限制输出大小的措施的注释。
 
-Remember to prioritize stability and manageability in your analysis. If at any point you encounter potential issues with large result sets, adjust your approach accordingly.
+   c. 使用run_script工具在MCP服务器上执行你的Python脚本。
 
-Please begin your analysis by loading the CSV file and providing an initial exploration of the dataset.
+   d. 详细描述run_script工具返回的结果，重点关注观察到的关键见解和模式。提供清晰简洁的文字总结，而不是使用图形表示。
+
+6. 完成所有5个问题的分析后，提供你的发现和从数据中获得的任何总体见解的简要总结。
+
+记住在分析中优先考虑稳定性和可管理性。如果在任何时候遇到潜在的结果集过大问题，请相应地调整你的方法。
+
+请通过加载CSV文件并提供数据集的初步探索来开始你的分析。
 """
-
-
 ### Data Exploration Tools Description & Schema
 class DataExplorationTools(str, Enum):
     LOAD_CSV = "load_csv"
@@ -125,10 +124,10 @@ Usage Notes:
 	•	If a df_name is not provided, the tool will automatically assign names sequentially as df_1, df_2, and so on.
 """
 
+
 class LoadCsv(BaseModel):
     csv_path: str
     df_name: Optional[str] = None
-
 
 
 RUN_SCRIPT_TOOL_DESCRIPTION = """
@@ -146,6 +145,7 @@ Prohibited Actions
 	2.	Creating Charts: Chart generation is not permitted.
 """
 
+
 class RunScript(BaseModel):
     script: str
     save_to_memory: Optional[List[str]] = None
@@ -158,7 +158,7 @@ class ScriptRunner:
         self.df_count = 0
         self.notes: list[str] = []
 
-    def load_csv(self, csv_path: str, df_name:str = None):
+    def load_csv(self, csv_path: str, df_name: str = None):
         self.df_count += 1
         if not df_name:
             df_name = f"df_{self.df_count}"
@@ -166,12 +166,10 @@ class ScriptRunner:
             self.data[df_name] = pd.read_csv(csv_path)
             self.notes.append(f"Successfully loaded CSV into dataframe '{df_name}'")
             return [
-                TextContent(type="text", text=f"Successfully loaded CSV into dataframe '{df_name}'")
+                TextContent(type="text", text=f"Successfully loaded CSV into dataframe，变量名：{df_name}")
             ]
         except Exception as e:
-            raise McpError(
-                INTERNAL_ERROR, f"Error loading CSV: {str(e)}"
-            ) from e
+            raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Error loading CSV: {str(e)}")) from e
 
     def safe_eval(self, script: str, save_to_memory: Optional[List[str]] = None):
         """safely run a script, return the result if valid, otherwise return the error message"""
@@ -187,11 +185,11 @@ class ScriptRunner:
             self.notes.append(f"Running script: \n{script}")
             # pylint: disable=exec-used
             exec(script, \
-                {'pd': pd, 'np': np, 'scipy': scipy, 'sklearn': sklearn, 'statsmodels': sm}, \
-                local_dict)
+                 {'pd': pd, 'np': np, 'scipy': scipy, 'sklearn': sklearn, 'statsmodels': sm}, \
+                 local_dict)
             std_out_script = stdout_capture.getvalue()
         except Exception as e:
-            raise McpError(INTERNAL_ERROR, f"Error running script: {str(e)}") from e
+            raise McpError(ErrorData(code=INTERNAL_ERROR,message= f"Error running script: {str(e)}")) from e
 
         # check if the result is a dataframe
         if save_to_memory:
@@ -204,6 +202,7 @@ class ScriptRunner:
         return [
             TextContent(type="text", text=f"print out result: {output}")
         ]
+
 
 ### MCP Server Definition
 async def main():
@@ -283,9 +282,9 @@ async def main():
         logger.debug("Handling list_tools request")
         return [
             Tool(
-                name = DataExplorationTools.LOAD_CSV,
-                description = LOAD_CSV_TOOL_DESCRIPTION,
-                inputSchema = LoadCsv.model_json_schema(),
+                name=DataExplorationTools.LOAD_CSV,
+                description=LOAD_CSV_TOOL_DESCRIPTION,
+                inputSchema=LoadCsv.model_json_schema(),
             ),
             Tool(
                 name=DataExplorationTools.RUN_SCRIPT,
@@ -296,7 +295,7 @@ async def main():
 
     @server.call_tool()
     async def handle_call_tool(
-        name: str, arguments: dict | None
+            name: str, arguments: dict | None
     ) -> list[TextContent | EmbeddedResource]:
         logger.debug(f"Handling call_tool request for {name} with args {arguments}")
         if name == DataExplorationTools.LOAD_CSV:
@@ -308,7 +307,7 @@ async def main():
             df_name = arguments.get("df_name")
             return script_runner.safe_eval(script, df_name)
         else:
-            raise McpError(INTERNAL_ERROR, f"Unknown tool: {name}")
+            raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Unknown tool: {name}"))
         return None
 
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
