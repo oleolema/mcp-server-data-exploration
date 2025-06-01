@@ -1,6 +1,6 @@
 from enum import Enum
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 ## import mcp server
 from mcp.server.models import InitializationOptions
@@ -21,14 +21,7 @@ from pydantic import AnyUrl
 import mcp.server.stdio
 from pydantic import BaseModel
 
-## import common data analysis libraries
-import pandas as pd
-import numpy as np
-import scipy
-import sklearn
-import statsmodels.api as sm
-from io import StringIO
-import sys
+from mcp_server_ds.script_runner import ScriptRunner, RunScript
 
 logger = logging.getLogger(__name__)
 logger.info("Starting mini data science exploration server")
@@ -40,17 +33,10 @@ class DataExplorationPrompts(str, Enum):
 
 
 class PromptArgs(str, Enum):
-    CSV_PATH = "csv_path"
     TOPIC = "topic"
 
 PROMPT_TEMPLATE = """
 你是一名专业的数据科学家，负责对一个数据集进行探索性数据分析。你的目标是提供有见地的分析，提出问题，并按步骤解决问题，同时确保稳定性和结果大小的可管理性。
-
-首先，从以下路径加载CSV文件：
-
-<csv_path>
-{csv_path}
-</csv_path>
 
 你的分析应集中在以下主题：
 
@@ -59,14 +45,11 @@ PROMPT_TEMPLATE = """
 </analysis_topic>
 
 你可以使用以下工具进行分析：
-1. load_csv：用于加载CSV文件。
-2. run_script：用于在MCP服务器上执行Python脚本。
+1. run_script：用于在MCP服务器上执行Python脚本。
 
 请仔细按照以下步骤进行：
 
-1. 使用load_csv工具加载CSV文件。
-
-2. 探索数据集。提供其结构的简要总结，包括行数、列数和数据类型。包括：
+2. 探索数据集。提供其结构的简要总结，包括行数、列数和数据类型。**注意：数据文件默认会从/my/data/目录自动加载。** 包括：
    - 数据集的关键统计信息列表
    - 你在分析该数据时预见的潜在挑战
 
@@ -106,28 +89,11 @@ PROMPT_TEMPLATE = """
 
 记住在分析中优先考虑稳定性和可管理性。如果在任何时候遇到潜在的结果集过大问题，请相应地调整你的方法。
 
-请通过加载CSV文件并提供数据集的初步探索来开始你的分析。
+请通过提供数据集的初步探索来开始你的分析。
 """
 ### Data Exploration Tools Description & Schema
 class DataExplorationTools(str, Enum):
-    LOAD_CSV = "load_csv"
     RUN_SCRIPT = "run_script"
-
-
-LOAD_CSV_TOOL_DESCRIPTION = """
-Load CSV File Tool
-
-Purpose:
-Load a local CSV file into a DataFrame.
-
-Usage Notes:
-	•	If a df_name is not provided, the tool will automatically assign names sequentially as df_1, df_2, and so on.
-"""
-
-
-class LoadCsv(BaseModel):
-    csv_path: str
-    df_name: Optional[str] = None
 
 
 RUN_SCRIPT_TOOL_DESCRIPTION = """
@@ -137,71 +103,13 @@ Purpose:
 Execute Python scripts for specific data analytics tasks.
 
 Allowed Actions
-	1.	Print Results: Output will be displayed as the script’s stdout.
-	2.	[Optional] Save DataFrames: Store DataFrames in memory for future use by specifying a save_to_memory name.
+	1.	Print Results: Output will be displayed as the script's stdout.
+	2.	[Optional] Save Dataframes: Save DataFrames to local disk by specifying a list of dictionaries, where each dictionary contains the dataframe name and the path where it should be saved. For example: `[{"df_name": "df_1", "path": "output/df_1.csv"}]`.
 
 Prohibited Actions
 	1.	Overwriting Original DataFrames: Do not modify existing DataFrames to preserve their integrity for future tasks.
 	2.	Creating Charts: Chart generation is not permitted.
 """
-
-
-class RunScript(BaseModel):
-    script: str
-    save_to_memory: Optional[List[str]] = None
-
-
-### Python (Pandas, NumPy, SciPy) Script Runner
-class ScriptRunner:
-    def __init__(self):
-        self.data = {}
-        self.df_count = 0
-        self.notes: list[str] = []
-
-    def load_csv(self, csv_path: str, df_name: str = None):
-        self.df_count += 1
-        if not df_name:
-            df_name = f"df_{self.df_count}"
-        try:
-            self.data[df_name] = pd.read_csv(csv_path)
-            self.notes.append(f"Successfully loaded CSV into dataframe '{df_name}'")
-            return [
-                TextContent(type="text", text=f"Successfully loaded CSV into dataframe，变量名：{df_name}")
-            ]
-        except Exception as e:
-            raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Error loading CSV: {str(e)}")) from e
-
-    def safe_eval(self, script: str, save_to_memory: Optional[List[str]] = None):
-        """safely run a script, return the result if valid, otherwise return the error message"""
-        # first extract dataframes from the self.data
-        local_dict = {
-            **{df_name: df for df_name, df in self.data.items()},
-        }
-        # execute the script and return the result and if there is error, return the error message
-        try:
-            stdout_capture = StringIO()
-            old_stdout = sys.stdout
-            sys.stdout = stdout_capture
-            self.notes.append(f"Running script: \n{script}")
-            # pylint: disable=exec-used
-            exec(script, \
-                 {'pd': pd, 'np': np, 'scipy': scipy, 'sklearn': sklearn, 'statsmodels': sm}, \
-                 local_dict)
-            std_out_script = stdout_capture.getvalue()
-        except Exception as e:
-            raise McpError(ErrorData(code=INTERNAL_ERROR,message= f"Error running script: {str(e)}")) from e
-
-        # check if the result is a dataframe
-        if save_to_memory:
-            for df_name in save_to_memory:
-                self.notes.append(f"Saving dataframe '{df_name}' to memory")
-                self.data[df_name] = local_dict.get(df_name)
-
-        output = std_out_script if std_out_script else "No output"
-        self.notes.append(f"Result: {output}")
-        return [
-            TextContent(type="text", text=f"print out result: {output}")
-        ]
 
 
 ### MCP Server Definition
@@ -238,11 +146,6 @@ async def main():
                 description="A prompt to explore a csv dataset as a data scientist",
                 arguments=[
                     PromptArgument(
-                        name=PromptArgs.CSV_PATH,
-                        description="The path to the csv file",
-                        required=True,
-                    ),
-                    PromptArgument(
                         name=PromptArgs.TOPIC,
                         description="The topic the data exploration need to focus on",
                         required=False,
@@ -258,15 +161,10 @@ async def main():
             logger.error(f"Unknown prompt: {name}")
             raise ValueError(f"Unknown prompt: {name}")
 
-        if not arguments or PromptArgs.CSV_PATH not in arguments:
-            logger.error("Missing required argument: csv_path")
-            raise ValueError("Missing required argument: csv_path")
-
-        csv_path = arguments[PromptArgs.CSV_PATH]
         topic = arguments.get(PromptArgs.TOPIC)
-        prompt = PROMPT_TEMPLATE.format(csv_path=csv_path, topic=topic)
+        prompt = PROMPT_TEMPLATE.format(topic=topic)
 
-        logger.debug(f"Generated prompt template for csv_path: {csv_path} and topic: {topic}")
+        logger.debug(f"Generated prompt template for topic: {topic}")
         return GetPromptResult(
             description=f"Data exploration template for {topic}",
             messages=[
@@ -282,11 +180,6 @@ async def main():
         logger.debug("Handling list_tools request")
         return [
             Tool(
-                name=DataExplorationTools.LOAD_CSV,
-                description=LOAD_CSV_TOOL_DESCRIPTION,
-                inputSchema=LoadCsv.model_json_schema(),
-            ),
-            Tool(
                 name=DataExplorationTools.RUN_SCRIPT,
                 description=RUN_SCRIPT_TOOL_DESCRIPTION,
                 inputSchema=RunScript.model_json_schema(),
@@ -298,14 +191,10 @@ async def main():
             name: str, arguments: dict | None
     ) -> list[TextContent | EmbeddedResource]:
         logger.debug(f"Handling call_tool request for {name} with args {arguments}")
-        if name == DataExplorationTools.LOAD_CSV:
-            csv_path = arguments.get("csv_path")
-            df_name = arguments.get("df_name")
-            return script_runner.load_csv(csv_path, df_name)
-        elif name == DataExplorationTools.RUN_SCRIPT:
+        if name == DataExplorationTools.RUN_SCRIPT:
             script = arguments.get("script")
-            df_name = arguments.get("df_name")
-            return script_runner.safe_eval(script, df_name)
+            save_to_disk = arguments.get("save_to_disk")
+            return script_runner.safe_eval(script, save_to_disk)
         else:
             raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Unknown tool: {name}"))
         return None
@@ -324,3 +213,7 @@ async def main():
                 ),
             ),
         )
+
+class RunScript(BaseModel):
+    script: str
+    save_to_disk: Optional[List[Dict[str, str]]] = None
