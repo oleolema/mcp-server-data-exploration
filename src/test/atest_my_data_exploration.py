@@ -39,12 +39,12 @@ async def atest_my_client():
             tools = await load_mcp_tools(session)
             # tools = await client.get_tools()
             print("------------------")
-            agent = create_react_agent("azure_openai:gpt-4-turbo", tools)
+            agent = create_react_agent("azure_openai:gpt-4o", tools)
             user_message = (
-                f"前提条件：加载csv文件：load_csv('/Users/leqiuhong/PycharmProjects/langchain-mcp-adapters/tests/mock/sale_table.csv')\n"
+                f"不需要read_csv, 现在已经有了DataFrame数据: sale_table\n"
                 f"然后，你需要根据用户的问题来分析数据，结合数据和你自己的分析结果来回答问题\n"
                 f"问题：\n"
-                f"京东的销量是多少")
+                f"异常洞察")
             agent_response_iter = agent.astream({"messages": user_message})
 
             await print_agent_response(agent_response_iter)

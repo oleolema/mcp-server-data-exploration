@@ -49,7 +49,7 @@ PROMPT_TEMPLATE = """
 
 请仔细按照以下步骤进行：
 
-2. 探索数据集。提供其结构的简要总结，包括行数、列数和数据类型。**注意：数据文件默认会从/my/data/目录自动加载。** 包括：
+2. 探索数据集。提供其结构的简要总结，包括行数、列数和数据类型。。** 包括：
    - 数据集的关键统计信息列表
    - 你在分析该数据时预见的潜在挑战
 
@@ -193,11 +193,11 @@ async def main():
         logger.debug(f"Handling call_tool request for {name} with args {arguments}")
         if name == DataExplorationTools.RUN_SCRIPT:
             script = arguments.get("script")
-            save_to_disk = arguments.get("save_to_disk")
-            return script_runner.safe_eval(script, save_to_disk)
+            save_to_memory = arguments.get("save_to_memory")
+            return script_runner.safe_eval(script, save_to_memory)
         else:
             raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Unknown tool: {name}"))
-        return None
+
 
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         logger.debug("Server running with stdio transport")
@@ -214,6 +214,4 @@ async def main():
             ),
         )
 
-class RunScript(BaseModel):
-    script: str
-    save_to_disk: Optional[List[Dict[str, str]]] = None
+
