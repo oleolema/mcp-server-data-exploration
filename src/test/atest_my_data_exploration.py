@@ -35,17 +35,20 @@ async def atest_my_client():
             # Initialize the connection
             await session.initialize()
 
+            prompt = await session.get_prompt('explore-data', {
+                'dataframe_name': 'sale_table',
+                'topic': '销量异常的渠道分析'
+            })
+
             # Get tools
             tools = await load_mcp_tools(session)
             # tools = await client.get_tools()
             print("------------------")
             agent = create_react_agent("azure_openai:gpt-4o", tools)
-            user_message = (
-                f"不需要read_csv, 现在已经有了DataFrame数据: sale_table\n"
-                f"然后，你需要根据用户的问题来分析数据，结合数据和你自己的分析结果来回答问题\n"
-                f"问题：\n"
-                f"异常洞察")
-            agent_response_iter = agent.astream({"messages": user_message})
+            # 取出所有的text内容并放到一个列表中
+            texts = [msg.content.text for msg in prompt.messages]
+
+            agent_response_iter = agent.astream({"messages": texts})
 
             await print_agent_response(agent_response_iter)
 

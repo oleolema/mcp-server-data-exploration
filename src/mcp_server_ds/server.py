@@ -34,9 +34,11 @@ class DataExplorationPrompts(str, Enum):
 
 class PromptArgs(str, Enum):
     TOPIC = "topic"
+    DATAFRAME_NAME = "dataframe_name"
+
 
 PROMPT_TEMPLATE = """
-你是一名专业的数据科学家，负责对一个数据集进行探索性数据分析。你的目标是提供有见地的分析，提出问题，并按步骤解决问题，同时确保稳定性和结果大小的可管理性。
+你是一名专业的数据科学家，负责对一个数据集进行探索性数据分析。你将获得一个名为 `{dataframe_name}` 的数据集。你的目标是提供有见地的分析，提出问题，并按步骤解决问题，同时确保稳定性和结果大小的可管理性。
 
 你的分析应集中在以下主题：
 
@@ -44,12 +46,19 @@ PROMPT_TEMPLATE = """
 {topic}
 </analysis_topic>
 
+在MCP服务器已经创建了下面的dataframe数据
+<dataframe_name>
+{dataframe_name}
+</dataframe_name>
+
 你可以使用以下工具进行分析：
-1. run_script：用于在MCP服务器上执行Python脚本。
+- run_script：用于在MCP服务器上执行Python脚本。
 
 请仔细按照以下步骤进行：
 
-2. 探索数据集。提供其结构的简要总结，包括行数、列数和数据类型。。** 包括：
+1. 使用run_script 查看 `{dataframe_name}` 的前几行数据 和元数据信息等基础信息。
+
+2. 探索数据集 `{dataframe_name}`。提供其结构的简要总结，包括行数、列数和数据类型。。** 包括：
    - 数据集的关键统计信息列表
    - 你在分析该数据时预见的潜在挑战
 
@@ -91,30 +100,40 @@ PROMPT_TEMPLATE = """
 
 请通过提供数据集的初步探索来开始你的分析。
 """
+
+
 ### Data Exploration Tools Description & Schema
 class DataExplorationTools(str, Enum):
     RUN_SCRIPT = "run_script"
+    SET_DATA_DIR = "set_data_dir"
 
 
 RUN_SCRIPT_TOOL_DESCRIPTION = """
-Python Script Execution Tool
+用Python脚本执行数据分析任务。
 
-Purpose:
-Execute Python scripts for specific data analytics tasks.
+用途：
+执行 Python 脚本以完成特定的数据分析任务。
 
-Allowed Actions
-	1.	Print Results: Output will be displayed as the script's stdout.
-	2.	[Optional] Save Dataframes: Save DataFrames to local disk by specifying a list of dictionaries, where each dictionary contains the dataframe name and the path where it should be saved. For example: `[{"df_name": "df_1", "path": "output/df_1.csv"}]`.
+已引入的库：
+   - pandas: 用于数据处理和分析。
+   - sklearn: 用于数值计算。
+   - scipy: 用于科学计算。
+   - statsmodels: 用于统计分析
+   
+已定义了部分Dataframes 可以在脚本中直接使用。
 
-Prohibited Actions
-	1.	Overwriting Original DataFrames: Do not modify existing DataFrames to preserve their integrity for future tasks.
-	2.	Creating Charts: Chart generation is not permitted.
+允许的操作
+   1. 打印结果：输出将显示为脚本的标准输出。
+   2. [可选] 持久化Dataframes：将Dataframes保存到内存中以供将来使用。这将使Dataframes在同一会话的后续脚本执行中可访问。要保存，请提供要保留的Dataframes名称列表。
+
+禁止的操作
+   1. 覆盖原始Dataframes：不要修改现有Dataframes，以保持其完整性供将来任务使用。
+   2. 创建图表：不允许生成图表。
 """
 
 
 ### MCP Server Definition
-async def main():
-    script_runner = ScriptRunner()
+async def main(script_runner: ScriptRunner):
     server = Server("local-mini-ds")
 
     @server.list_resources()
@@ -150,6 +169,11 @@ async def main():
                         description="The topic the data exploration need to focus on",
                         required=False,
                     ),
+                    PromptArgument(
+                        name=PromptArgs.DATAFRAME_NAME,
+                        description="The name of the dataframe to be explored",
+                        required=True,
+                    ),
                 ],
             )
         ]
@@ -162,7 +186,8 @@ async def main():
             raise ValueError(f"Unknown prompt: {name}")
 
         topic = arguments.get(PromptArgs.TOPIC)
-        prompt = PROMPT_TEMPLATE.format(topic=topic)
+        dataframe_name = arguments.get(PromptArgs.DATAFRAME_NAME)
+        prompt = PROMPT_TEMPLATE.format(topic=topic, dataframe_name=dataframe_name)
 
         logger.debug(f"Generated prompt template for topic: {topic}")
         return GetPromptResult(
@@ -193,11 +218,10 @@ async def main():
         logger.debug(f"Handling call_tool request for {name} with args {arguments}")
         if name == DataExplorationTools.RUN_SCRIPT:
             script = arguments.get("script")
-            save_to_memory = arguments.get("save_to_memory")
-            return script_runner.safe_eval(script, save_to_memory)
+            persistent_dataframes = arguments.get("persistent_dataframes")
+            return script_runner.safe_eval(script, persistent_dataframes)
         else:
             raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Unknown tool: {name}"))
-
 
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         logger.debug("Server running with stdio transport")
@@ -215,3 +239,23 @@ async def main():
         )
 
 
+if __name__ == "__main__":
+    """Main entry point for the package."""
+    import asyncio
+
+    logger.setLevel(logging.DEBUG)
+
+    # Parse command line arguments for data_dir and clean_days
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Start the data exploration server.")
+    parser.add_argument("--data_dir", type=str, default=None, help="Directory to store data files")
+    parser.add_argument("--clean_hours", type=float, default=None,
+                        help="Clean files older than this many hours on startup")
+    args = parser.parse_args()
+
+    data_dir = args.data_dir
+    clean_hours = args.clean_hours
+
+    script_runner = ScriptRunner(data_dir=data_dir, clean_hours=clean_hours)
+    asyncio.run(main(script_runner))
